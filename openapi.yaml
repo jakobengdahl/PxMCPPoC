@@ -1,0 +1,267 @@
+openapi: 3.1.0
+info:
+  title: SCB Statistics Sweden API
+  description: |
+    Access open statistical data from Statistics Sweden (Statistiska centralbyrån).
+
+    This API provides access to SCB's open data including:
+    - Population statistics
+    - Labor market data
+    - Economic indicators
+    - And much more
+
+    Language support: Swedish (sv) and English (en)
+  version: 1.0.0
+  contact:
+    name: SCB MCP Server
+    url: https://github.com/jakobengdahl/PxMCPPoC
+
+servers:
+  - url: https://user-jakobengdahl-804804-user.user.lab.sspcloud.fr
+    description: Production server
+  - url: http://localhost:8000
+    description: Local development server
+
+paths:
+  /health:
+    get:
+      summary: Health check
+      operationId: healthCheck
+      description: Check if the API is running
+      responses:
+        '200':
+          description: API is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: healthy
+                  service:
+                    type: string
+                    example: scb-mcp-server
+
+  /tools:
+    get:
+      summary: List available tools
+      operationId: listTools
+      description: Get a list of all available SCB tools
+      responses:
+        '200':
+          description: List of tools
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tools:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Tool'
+
+  /call_tool:
+    post:
+      summary: Call an SCB tool
+      operationId: callTool
+      description: Execute one of the available SCB tools to query Swedish statistics
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ToolCall'
+            examples:
+              browseMetadata:
+                summary: Browse SCB metadata tree
+                value:
+                  name: scb_browse_metadata
+                  arguments:
+                    path: ""
+                    language: "sv"
+              searchPopulation:
+                summary: Search for population tables
+                value:
+                  name: scb_search_tables
+                  arguments:
+                    query: "befolkning"
+                    language: "sv"
+              getTableMetadata:
+                summary: Get metadata for a specific table
+                value:
+                  name: scb_get_table_metadata
+                  arguments:
+                    table_id: "BE0101N1"
+                    language: "sv"
+              fetchData:
+                summary: Fetch population data
+                value:
+                  name: scb_fetch_data
+                  arguments:
+                    table_id: "BE0101N1"
+                    query:
+                      Region: ["*"]
+                      Tid: ["2023"]
+                    language: "sv"
+
+      responses:
+        '200':
+          description: Successful tool execution
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ToolResult'
+        '400':
+          description: Bad request - missing or invalid parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Tool not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+components:
+  schemas:
+    Tool:
+      type: object
+      properties:
+        name:
+          type: string
+          description: Tool name
+        description:
+          type: string
+          description: Tool description
+        inputSchema:
+          type: object
+          description: JSON schema for tool input
+
+    ToolCall:
+      type: object
+      required:
+        - name
+        - arguments
+      properties:
+        name:
+          type: string
+          description: Name of the tool to call
+          enum:
+            - scb_browse_metadata
+            - scb_search_tables
+            - scb_get_table_metadata
+            - scb_fetch_data
+            - scb_get_table_info
+        arguments:
+          type: object
+          description: Tool-specific arguments
+          oneOf:
+            - $ref: '#/components/schemas/BrowseMetadataArgs'
+            - $ref: '#/components/schemas/SearchTablesArgs'
+            - $ref: '#/components/schemas/GetTableMetadataArgs'
+            - $ref: '#/components/schemas/FetchDataArgs'
+            - $ref: '#/components/schemas/GetTableInfoArgs'
+
+    BrowseMetadataArgs:
+      type: object
+      properties:
+        path:
+          type: string
+          description: Path in metadata tree (empty for root)
+          example: ""
+        language:
+          type: string
+          enum: [sv, en]
+          default: sv
+          description: Language for results
+
+    SearchTablesArgs:
+      type: object
+      required:
+        - query
+      properties:
+        query:
+          type: string
+          description: Search query (keywords in Swedish or English)
+          example: "befolkning"
+        language:
+          type: string
+          enum: [sv, en]
+          default: sv
+
+    GetTableMetadataArgs:
+      type: object
+      required:
+        - table_id
+      properties:
+        table_id:
+          type: string
+          description: SCB table identifier
+          example: "BE0101N1"
+        language:
+          type: string
+          enum: [sv, en]
+          default: sv
+
+    FetchDataArgs:
+      type: object
+      required:
+        - table_id
+        - query
+      properties:
+        table_id:
+          type: string
+          description: SCB table identifier
+          example: "BE0101N1"
+        query:
+          type: object
+          description: Query specification with variables and values
+          example:
+            Region: ["*"]
+            Tid: ["2023"]
+        language:
+          type: string
+          enum: [sv, en]
+          default: sv
+
+    GetTableInfoArgs:
+      type: object
+      required:
+        - table_id
+      properties:
+        table_id:
+          type: string
+          description: SCB table identifier
+        language:
+          type: string
+          enum: [sv, en]
+          default: sv
+
+    ToolResult:
+      type: object
+      properties:
+        success:
+          type: boolean
+          description: Whether the tool executed successfully
+        result:
+          type: object
+          description: Tool-specific result data
+
+    Error:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          type: string
+          description: Error message
