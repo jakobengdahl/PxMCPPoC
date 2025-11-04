@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-SCB MCP Server (HTTP/SSE) - A Model Context Protocol server for Statistics Sweden (SCB) data access
-Exposes the server over HTTP with SSE transport for external AI assistant access
+SCB MCP Server (HTTP) - A Model Context Protocol server for Statistics Sweden (SCB) data access
+Exposes the server over HTTP using JSON-RPC style endpoints for external AI assistant access
 """
 
 import json
@@ -10,10 +10,6 @@ from typing import Any
 from pyscbwrapper import SCB
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
-from sse_starlette.sse import EventSourceResponse
-from mcp.server.sse import SseServerTransport
-from mcp.server import Server
-from mcp.types import Tool, TextContent
 import asyncio
 
 # Configure logging
@@ -23,9 +19,6 @@ logger = logging.getLogger("scb-mcp-http-server")
 # Initialize FastAPI
 api = FastAPI(title="SCB MCP Server", version="1.0.0")
 
-# Initialize the MCP server
-mcp_server = Server("scb-statistics")
-
 # Initialize SCB clients for both languages
 scb_sv = SCB("sv")  # Swedish
 scb_en = SCB("en")  # English
@@ -34,195 +27,6 @@ scb_en = SCB("en")  # English
 def get_scb_client(lang: str = "sv") -> SCB:
     """Get SCB client for specified language"""
     return scb_en if lang.lower() == "en" else scb_sv
-
-
-# Define MCP tools
-@mcp_server.list_tools()
-async def list_tools() -> list[Tool]:
-    """List available SCB data tools"""
-    return [
-        Tool(
-            name="scb_browse_metadata",
-            description=(
-                "Browse SCB metadata tree to discover available statistical tables. "
-                "Start from root or navigate to specific paths. "
-                "Returns metadata including table IDs, titles, and navigation options. "
-                "Supports both Swedish (sv) and English (en)."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "Path in metadata tree (e.g., 'AM/AM0401' or empty for root)",
-                        "default": "",
-                    },
-                    "language": {
-                        "type": "string",
-                        "description": "Language for results: 'sv' (Swedish) or 'en' (English)",
-                        "enum": ["sv", "en"],
-                        "default": "sv",
-                    },
-                },
-            },
-        ),
-        Tool(
-            name="scb_search_tables",
-            description=(
-                "Search for statistical tables in SCB database using keywords. "
-                "Returns matching tables with their IDs, titles, and descriptions. "
-                "Supports both Swedish and English search."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "Search query (e.g., 'befolkning', 'population', 'arbetslöshet', 'unemployment')",
-                    },
-                    "language": {
-                        "type": "string",
-                        "description": "Language for results: 'sv' (Swedish) or 'en' (English)",
-                        "enum": ["sv", "en"],
-                        "default": "sv",
-                    },
-                },
-                "required": ["query"],
-            },
-        ),
-        Tool(
-            name="scb_get_table_metadata",
-            description=(
-                "Get detailed metadata for a specific SCB table including available variables, "
-                "dimensions, time periods, and value codes. This is essential before fetching data."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "table_id": {
-                        "type": "string",
-                        "description": "SCB table ID (e.g., 'TAB638', 'BE0101N1')",
-                    },
-                    "language": {
-                        "type": "string",
-                        "description": "Language for results: 'sv' (Swedish) or 'en' (English)",
-                        "enum": ["sv", "en"],
-                        "default": "sv",
-                    },
-                },
-                "required": ["table_id"],
-            },
-        ),
-        Tool(
-            name="scb_fetch_data",
-            description=(
-                "Fetch actual statistical data from an SCB table. "
-                "Requires table_id and query specification with variables and their values. "
-                "Returns data in structured JSON format."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "table_id": {
-                        "type": "string",
-                        "description": "SCB table ID",
-                    },
-                    "query": {
-                        "type": "object",
-                        "description": (
-                            "Query specification with variables and selected values. "
-                            "Example: {'Region': ['*'], 'Tid': ['2023', '2024']}"
-                        ),
-                    },
-                    "language": {
-                        "type": "string",
-                        "description": "Language for results: 'sv' (Swedish) or 'en' (English)",
-                        "enum": ["sv", "en"],
-                        "default": "sv",
-                    },
-                },
-                "required": ["table_id", "query"],
-            },
-        ),
-        Tool(
-            name="scb_get_table_info",
-            description=(
-                "Get comprehensive information about a specific table including its location path, "
-                "full URL, and basic metadata. Useful for understanding table context."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "table_id": {
-                        "type": "string",
-                        "description": "SCB table ID",
-                    },
-                    "language": {
-                        "type": "string",
-                        "description": "Language for results: 'sv' (Swedish) or 'en' (English)",
-                        "enum": ["sv", "en"],
-                        "default": "sv",
-                    },
-                },
-                "required": ["table_id"],
-            },
-        ),
-    ]
-
-
-@mcp_server.call_tool()
-async def call_tool(name: str, arguments: Any) -> list[TextContent]:
-    """Handle tool calls"""
-    try:
-        if name == "scb_browse_metadata":
-            result = await browse_metadata(
-                path=arguments.get("path", ""),
-                language=arguments.get("language", "sv")
-            )
-            return [TextContent(type="text", text=json.dumps(result, indent=2, ensure_ascii=False))]
-
-        elif name == "scb_search_tables":
-            result = await search_tables(
-                query=arguments["query"],
-                language=arguments.get("language", "sv")
-            )
-            return [TextContent(type="text", text=json.dumps(result, indent=2, ensure_ascii=False))]
-
-        elif name == "scb_get_table_metadata":
-            result = await get_table_metadata(
-                table_id=arguments["table_id"],
-                language=arguments.get("language", "sv")
-            )
-            return [TextContent(type="text", text=json.dumps(result, indent=2, ensure_ascii=False))]
-
-        elif name == "scb_fetch_data":
-            result = await fetch_data(
-                table_id=arguments["table_id"],
-                query=arguments["query"],
-                language=arguments.get("language", "sv")
-            )
-            return [TextContent(type="text", text=json.dumps(result, indent=2, ensure_ascii=False))]
-
-        elif name == "scb_get_table_info":
-            result = await get_table_info(
-                table_id=arguments["table_id"],
-                language=arguments.get("language", "sv")
-            )
-            return [TextContent(type="text", text=json.dumps(result, indent=2, ensure_ascii=False))]
-
-        else:
-            raise ValueError(f"Unknown tool: {name}")
-
-    except Exception as e:
-        logger.error(f"Error in {name}: {str(e)}", exc_info=True)
-        return [TextContent(
-            type="text",
-            text=json.dumps({
-                "error": str(e),
-                "tool": name,
-                "arguments": arguments
-            }, indent=2, ensure_ascii=False)
-        )]
 
 
 # Tool implementation functions
@@ -357,9 +161,16 @@ async def root():
         "name": "SCB MCP Server",
         "version": "1.0.0",
         "description": "Model Context Protocol server for Statistics Sweden (SCB) data access",
+        "protocol": "HTTP JSON-RPC style",
         "endpoints": {
-            "sse": "/sse",
+            "tools": "/tools",
+            "call_tool": "/call_tool",
             "health": "/health"
+        },
+        "usage": {
+            "list_tools": "GET /tools",
+            "call_tool": "POST /call_tool with {name: string, arguments: object}",
+            "health_check": "GET /health"
         }
     }
 
@@ -370,35 +181,224 @@ async def health():
     return {"status": "healthy", "service": "scb-mcp-server"}
 
 
-@api.get("/sse")
-async def handle_sse(request: Request):
-    """Handle SSE connection for MCP"""
-    async def event_generator():
-        transport = SseServerTransport("/messages")
+@api.get("/tools")
+async def list_tools():
+    """List available SCB data tools"""
+    return {
+        "tools": [
+            {
+                "name": "scb_browse_metadata",
+                "description": (
+                    "Browse SCB metadata tree to discover available statistical tables. "
+                    "Start from root or navigate to specific paths. "
+                    "Returns metadata including table IDs, titles, and navigation options. "
+                    "Supports both Swedish (sv) and English (en)."
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "Path in metadata tree (e.g., 'AM/AM0401' or empty for root)",
+                            "default": "",
+                        },
+                        "language": {
+                            "type": "string",
+                            "description": "Language for results: 'sv' (Swedish) or 'en' (English)",
+                            "enum": ["sv", "en"],
+                            "default": "sv",
+                        },
+                    },
+                },
+            },
+            {
+                "name": "scb_search_tables",
+                "description": (
+                    "Search for statistical tables in SCB database using keywords. "
+                    "Returns matching tables with their IDs, titles, and descriptions. "
+                    "Supports both Swedish and English search."
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "Search query (e.g., 'befolkning', 'population', 'arbetslöshet', 'unemployment')",
+                        },
+                        "language": {
+                            "type": "string",
+                            "description": "Language for results: 'sv' (Swedish) or 'en' (English)",
+                            "enum": ["sv", "en"],
+                            "default": "sv",
+                        },
+                    },
+                    "required": ["query"],
+                },
+            },
+            {
+                "name": "scb_get_table_metadata",
+                "description": (
+                    "Get detailed metadata for a specific SCB table including available variables, "
+                    "dimensions, time periods, and value codes. This is essential before fetching data."
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "table_id": {
+                            "type": "string",
+                            "description": "SCB table ID (e.g., 'TAB638', 'BE0101N1')",
+                        },
+                        "language": {
+                            "type": "string",
+                            "description": "Language for results: 'sv' (Swedish) or 'en' (English)",
+                            "enum": ["sv", "en"],
+                            "default": "sv",
+                        },
+                    },
+                    "required": ["table_id"],
+                },
+            },
+            {
+                "name": "scb_fetch_data",
+                "description": (
+                    "Fetch actual statistical data from an SCB table. "
+                    "Requires table_id and query specification with variables and their values. "
+                    "Returns data in structured JSON format."
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "table_id": {
+                            "type": "string",
+                            "description": "SCB table ID",
+                        },
+                        "query": {
+                            "type": "object",
+                            "description": (
+                                "Query specification with variables and selected values. "
+                                "Example: {'Region': ['*'], 'Tid': ['2023', '2024']}"
+                            ),
+                        },
+                        "language": {
+                            "type": "string",
+                            "description": "Language for results: 'sv' (Swedish) or 'en' (English)",
+                            "enum": ["sv", "en"],
+                            "default": "sv",
+                        },
+                    },
+                    "required": ["table_id", "query"],
+                },
+            },
+            {
+                "name": "scb_get_table_info",
+                "description": (
+                    "Get comprehensive information about a specific table including its location path, "
+                    "full URL, and basic metadata. Useful for understanding table context."
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "table_id": {
+                            "type": "string",
+                            "description": "SCB table ID",
+                        },
+                        "language": {
+                            "type": "string",
+                            "description": "Language for results: 'sv' (Swedish) or 'en' (English)",
+                            "enum": ["sv", "en"],
+                            "default": "sv",
+                        },
+                    },
+                    "required": ["table_id"],
+                },
+            },
+        ]
+    }
 
-        async with transport.connect_sse(
-            request.scope,
-            request.receive,
-            request._send
-        ) as streams:
-            await mcp_server.run(
-                streams[0],
-                streams[1],
-                mcp_server.create_initialization_options()
+
+@api.post("/call_tool")
+async def call_tool(request: Request):
+    """Call a tool with the given arguments"""
+    try:
+        body = await request.json()
+        name = body.get("name")
+        arguments = body.get("arguments", {})
+
+        if not name:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "Missing 'name' field in request"}
             )
 
-    return EventSourceResponse(event_generator())
+        logger.info(f"Tool called: {name} with args: {arguments}")
 
+        # Route to the appropriate tool
+        if name == "scb_browse_metadata":
+            result = await browse_metadata(
+                path=arguments.get("path", ""),
+                language=arguments.get("language", "sv")
+            )
+        elif name == "scb_search_tables":
+            if "query" not in arguments:
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": "Missing required argument 'query'"}
+                )
+            result = await search_tables(
+                query=arguments["query"],
+                language=arguments.get("language", "sv")
+            )
+        elif name == "scb_get_table_metadata":
+            if "table_id" not in arguments:
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": "Missing required argument 'table_id'"}
+                )
+            result = await get_table_metadata(
+                table_id=arguments["table_id"],
+                language=arguments.get("language", "sv")
+            )
+        elif name == "scb_fetch_data":
+            if "table_id" not in arguments or "query" not in arguments:
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": "Missing required arguments 'table_id' and/or 'query'"}
+                )
+            result = await fetch_data(
+                table_id=arguments["table_id"],
+                query=arguments["query"],
+                language=arguments.get("language", "sv")
+            )
+        elif name == "scb_get_table_info":
+            if "table_id" not in arguments:
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": "Missing required argument 'table_id'"}
+                )
+            result = await get_table_info(
+                table_id=arguments["table_id"],
+                language=arguments.get("language", "sv")
+            )
+        else:
+            return JSONResponse(
+                status_code=404,
+                content={"error": f"Unknown tool: {name}"}
+            )
 
-@api.post("/messages")
-async def handle_messages(request: Request):
-    """Handle MCP messages via POST"""
-    # This endpoint allows for standard POST-based MCP communication
-    body = await request.json()
-    logger.info(f"Received message: {body}")
+        return JSONResponse(content={
+            "success": True,
+            "result": result
+        })
 
-    # Process the message and return response
-    return JSONResponse(content={"status": "received"})
+    except Exception as e:
+        logger.error(f"Error processing request: {str(e)}", exc_info=True)
+        return JSONResponse(
+            status_code=500,
+            content={
+                "success": False,
+                "error": str(e)
+            }
+        )
 
 
 if __name__ == "__main__":
@@ -406,7 +406,11 @@ if __name__ == "__main__":
 
     # Run the server
     logger.info("Starting SCB MCP Server on http://0.0.0.0:8000")
-    logger.info("SSE endpoint: http://0.0.0.0:8000/sse")
+    logger.info("Available endpoints:")
+    logger.info("  - GET  /         - Server info")
+    logger.info("  - GET  /health   - Health check")
+    logger.info("  - GET  /tools    - List available tools")
+    logger.info("  - POST /call_tool - Call a tool")
 
     uvicorn.run(
         api,
