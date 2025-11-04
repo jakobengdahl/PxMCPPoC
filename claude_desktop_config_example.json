@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "scb-statistics": {
+      "command": "python",
+      "args": [
+        "-u",
+        "/absolute/path/to/PxMCPPoC/scb_mcp_server.py"
+      ]
+    }
+  }
+}

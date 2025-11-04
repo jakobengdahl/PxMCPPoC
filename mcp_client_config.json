@@ -1,0 +1,20 @@
+{
+  "mcpServers": {
+    "scb-statistics": {
+      "command": "python",
+      "args": ["/path/to/PxMCPPoC/scb_mcp_server.py"],
+      "description": "SCB Statistics Sweden data access (stdio mode)",
+      "env": {}
+    },
+    "scb-statistics-http": {
+      "url": "http://localhost:8000/sse",
+      "transport": "sse",
+      "description": "SCB Statistics Sweden data access (HTTP/SSE mode)"
+    },
+    "scb-statistics-remote": {
+      "url": "http://your-server.com:8000/sse",
+      "transport": "sse",
+      "description": "SCB Statistics Sweden data access (remote server)"
+    }
+  }
+}
